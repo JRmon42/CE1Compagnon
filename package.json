@@ -1,0 +1,21 @@
+{
+  "name": "ce1-compagnon",
+  "version": "1.0.0",
+  "description": "CE1 Compagnon - application d'entrainement du soir pour les eleves de CE1 (francais et mathematiques)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0"
+  },
+  "author": "JRmon42",
+  "license": "MIT"
+}

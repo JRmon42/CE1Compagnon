@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#6C5CE7" />
+    <title>CE1 Compagnon</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👑</text></svg>" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- ================= ECRAN CONNEXION ================= -->
+      <section id="screen-login" class="screen active">
+        <div class="card login-card">
+          <div class="logo">👑</div>
+          <h1>CE1 Compagnon</h1>
+          <p class="subtitle">L'entraînement du soir, en français&nbsp;!</p>
+          <form id="login-form" autocomplete="off">
+            <label for="login">Identifiant</label>
+            <input id="login" name="login" type="text" inputmode="text" autocapitalize="none" placeholder="ton identifiant" required />
+            <label for="password">Mot de passe</label>
+            <input id="password" name="password" type="password" placeholder="ton mot de passe" required />
+            <button type="submit" class="btn btn-primary btn-big">Se connecter</button>
+            <p id="login-error" class="error" hidden></p>
+          </form>
+        </div>
+      </section>
+
+      <!-- ================= ECRAN ACCUEIL ================= -->
+      <section id="screen-home" class="screen">
+        <header class="topbar">
+          <div class="hello">Bonjour <span id="home-name">👋</span></div>
+          <button id="logout-btn" class="btn btn-ghost">Se déconnecter</button>
+        </header>
+        <div class="card home-card">
+          <div class="logo">🌙</div>
+          <h2>Prête pour ta séance du soir&nbsp;?</h2>
+          <p class="subtitle">Environ 20&nbsp;minutes d'exercices de français et de mathématiques.</p>
+          <button id="start-btn" class="btn btn-primary btn-big">▶️ Commencer la séance</button>
+          <button id="show-calendar-btn" class="btn btn-secondary">📅 Voir mon calendrier</button>
+        </div>
+      </section>
+
+      <!-- ================= ECRAN EXERCICE ================= -->
+      <section id="screen-exercise" class="screen">
+        <header class="topbar">
+          <div class="progress-wrap">
+            <div class="progress-text"><span id="exo-index">1</span>/<span id="exo-total">18</span></div>
+            <div class="progress-bar"><div id="progress-fill"></div></div>
+          </div>
+          <div class="timer" id="timer">20:00</div>
+        </header>
+
+        <div class="card exo-card">
+          <div class="exo-subject" id="exo-subject">Mathématiques</div>
+          <div class="exo-instruction" id="exo-instruction"></div>
+          <div class="exo-question" id="exo-question"></div>
+
+          <button id="listen-btn" class="btn btn-listen">🔊 Écouter la consigne</button>
+
+          <form id="answer-form" autocomplete="off">
+            <input id="answer-input" type="text" class="answer-input" placeholder="Ta réponse" autocomplete="off" />
+            <div id="choices" class="choices" hidden></div>
+            <div class="exo-actions">
+              <button type="button" id="hint-btn" class="btn btn-secondary">💡 Un indice</button>
+              <button type="submit" id="validate-btn" class="btn btn-primary">Valider</button>
+            </div>
+          </form>
+
+          <div id="hint-box" class="hint-box" hidden></div>
+
+          <!-- Zone de correction -->
+          <div id="feedback" class="feedback" hidden>
+            <div class="feedback-smiley" id="feedback-smiley">😄</div>
+            <div class="feedback-grade" id="feedback-grade"></div>
+            <div class="feedback-answer" id="feedback-answer"></div>
+            <div class="feedback-explanation" id="feedback-explanation"></div>
+            <button id="next-btn" class="btn btn-primary btn-big">Suivant ➡️</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= ECRAN RESULTAT ================= -->
+      <section id="screen-result" class="screen">
+        <div class="card result-card">
+          <div class="result-smiley" id="result-smiley">😄</div>
+          <h2 id="result-title">Bravo&nbsp;!</h2>
+          <div class="result-note" id="result-note">18/20</div>
+          <div class="result-grade" id="result-grade"></div>
+          <div class="result-breakdown" id="result-breakdown"></div>
+          <button id="result-calendar-btn" class="btn btn-secondary">📅 Voir mon calendrier</button>
+          <button id="result-home-btn" class="btn btn-primary">🏠 Accueil</button>
+        </div>
+      </section>
+
+      <!-- ================= ECRAN CALENDRIER ================= -->
+      <section id="screen-calendar" class="screen">
+        <header class="topbar">
+          <h2 class="cal-title">📅 Mon calendrier</h2>
+          <button id="calendar-back-btn" class="btn btn-ghost">← Retour</button>
+        </header>
+        <div class="card">
+          <div class="cal-nav">
+            <button id="cal-prev" class="btn btn-secondary">◀</button>
+            <div id="cal-month" class="cal-month"></div>
+            <button id="cal-next" class="btn btn-secondary">▶</button>
+          </div>
+          <div class="cal-grid-head">
+            <div>L</div><div>M</div><div>M</div><div>J</div><div>V</div><div>S</div><div>D</div>
+          </div>
+          <div id="cal-grid" class="cal-grid"></div>
+          <div class="cal-legend">
+            <span>😄👑 Très bien</span>
+            <span>🙂👑 Bien</span>
+            <span>😐 Moyen</span>
+            <span>😢 À revoir</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="exercises.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
