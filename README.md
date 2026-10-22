@@ -76,6 +76,9 @@ démarrage, et `ADMIN_LOGIN` promeut un compte existant en administrateur.
 
 ## ☁️ Déploiement Azure
 
+Adresse : **https://ce1compagnon.pontvianne.com** (domaine GoDaddy : CNAME `ce1compagnon` → `ce1compagnon-hpc.azurewebsites.net`
+et TXT `asuid.ce1compagnon` pour la vérification ; certificat HTTPS gratuit géré par App Service, renouvelé automatiquement).
+
 Déployé sur **Azure App Service** (Linux, Node), avec une ressource **Azure AI Speech** (niveau gratuit F0)
 pour la voix française. Le HTTPS est fourni automatiquement
 sur le domaine `*.azurewebsites.net`. Le dossier `/home` est persistant, donc les
