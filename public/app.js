@@ -31,35 +31,136 @@
   // ----------------------------------------------------------------------
   // Synthese vocale (voix francaise)
   // ----------------------------------------------------------------------
+  // 1) Voix neuronale francaise generee par le serveur (Azure AI Speech) :
+  //    meme voix francaise sur tous les appareils.
+  // 2) Secours : voix francaise du navigateur (jamais la voix anglaise par defaut).
+  const hasSynth = 'speechSynthesis' in window;
+  const player = new Audio();
+  player.preload = 'auto';
+  const audioCache = new Map(); // texte -> URL du fichier audio
+  let serverTts = false;
+  let speakToken = 0;
   let frVoice = null;
-  function loadVoices() {
-    if (!('speechSynthesis' in window)) return;
-    const voices = window.speechSynthesis.getVoices();
-    frVoice =
-      voices.find((v) => /fr[-_]FR/i.test(v.lang)) ||
-      voices.find((v) => /^fr/i.test(v.lang)) ||
-      null;
+
+  fetch('/api/tts/status')
+    .then((r) => r.json())
+    .then((s) => { serverTts = !!s.enabled; })
+    .catch(() => { serverTts = false; });
+
+  // Les tablettes (iPad) n'autorisent le son qu'apres un geste de l'utilisateur :
+  // on "debloque" le lecteur audio au premier toucher avec un court silence.
+  function silentWavUrl() {
+    const n = 400;
+    const buf = new ArrayBuffer(44 + n);
+    const v = new DataView(buf);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    w(36, 'data'); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
   }
-  if ('speechSynthesis' in window) {
+  function unlockAudio() {
+    document.removeEventListener('pointerdown', unlockAudio, true);
+    document.removeEventListener('keydown', unlockAudio, true);
+    try {
+      player.src = silentWavUrl();
+      const p = player.play();
+      if (p) p.catch(() => {});
+    } catch (e) { /* ignore */ }
+    if (hasSynth) {
+      // Reveille aussi la synthese du navigateur (necessaire sur iOS)
+      try { window.speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (e) { /* ignore */ }
+    }
+  }
+  document.addEventListener('pointerdown', unlockAudio, true);
+  document.addEventListener('keydown', unlockAudio, true);
+
+  // Choix de la meilleure voix francaise disponible dans le navigateur
+  function pickFrenchVoice() {
+    if (!hasSynth) return null;
+    const voices = window.speechSynthesis.getVoices().filter((v) => /^fr\b|^fr[-_]/i.test(v.lang));
+    if (!voices.length) return null;
+    const score = (v) =>
+      (/fr[-_]FR/i.test(v.lang) ? 10 : 0) +
+      (/natural|neural|online|google|premium|enhanced|amélie|amelie|thomas|denise|audrey|aurélie/i.test(v.name) ? 5 : 0) +
+      (v.localService ? 0 : 1);
+    return voices.sort((a, b) => score(b) - score(a))[0];
+  }
+  function loadVoices() { frVoice = pickFrenchVoice(); }
+  if (hasSynth) {
     loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
   }
-  function speak(text) {
-    if (!('speechSynthesis' in window) || !text) return;
+  function waitForVoices(ms) {
+    if (!hasSynth || frVoice || window.speechSynthesis.getVoices().length) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => { window.speechSynthesis.removeEventListener('voiceschanged', done); resolve(); };
+      window.speechSynthesis.addEventListener('voiceschanged', done);
+      setTimeout(done, ms);
+    });
+  }
+
+  async function browserSpeak(text, token) {
+    if (!hasSynth) return;
+    await waitForVoices(1500);
+    loadVoices();
+    if (token !== speakToken) return;
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'fr-FR';
       if (frVoice) u.voice = frVoice;
-      u.rate = 0.95;
-      u.pitch = 1.05;
+      u.rate = 0.9;
       window.speechSynthesis.speak(u);
     } catch (e) {
       /* la synthese vocale peut etre indisponible */
     }
   }
+
+  async function serverAudioUrl(text) {
+    if (audioCache.has(text)) return audioCache.get(text);
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error('tts ' + res.status);
+    const url = URL.createObjectURL(await res.blob());
+    audioCache.set(text, url);
+    if (audioCache.size > 150) {
+      const first = audioCache.keys().next().value;
+      URL.revokeObjectURL(audioCache.get(first));
+      audioCache.delete(first);
+    }
+    return url;
+  }
+
+  async function speak(text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    stopSpeak();
+    const token = ++speakToken;
+    if (serverTts && state.user) {
+      try {
+        const url = await serverAudioUrl(text);
+        if (token !== speakToken) return;
+        player.src = url;
+        await player.play();
+        return;
+      } catch (e) {
+        if (token !== speakToken) return;
+        /* on passe a la voix du navigateur */
+      }
+    }
+    browserSpeak(text, token);
+  }
+
   function stopSpeak() {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    speakToken++;
+    try { player.pause(); } catch (e) { /* ignore */ }
+    if (hasSynth) window.speechSynthesis.cancel();
   }
 
   // ----------------------------------------------------------------------
@@ -77,47 +178,285 @@
     const res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(err.error || 'Erreur'), { status: res.status });
+      throw Object.assign(new Error(err.error || 'Erreur'), { status: res.status, data: err });
     }
     return res.json();
   }
 
+  function setError(id, msg) {
+    const el = $(id);
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  function enterApp(me) {
+    state.user = me;
+    $('home-name').textContent = me.displayName || me.login;
+    $('admin-btn').hidden = me.role !== 'admin';
+    show('screen-home');
+  }
+
+  async function showLogin() {
+    state.user = null;
+    let cfg = { allowSignup: true, firstAccountIsAdmin: false };
+    try { cfg = await api('/api/config'); } catch (e) { /* valeurs par defaut */ }
+    $('signup-first').hidden = !cfg.firstAccountIsAdmin;
+    state.allowSignup = cfg.allowSignup;
+    $('tab-signup').hidden = !cfg.allowSignup;
+    $('signup-closed').hidden = !!cfg.allowSignup;
+    // Premier lancement : on propose directement la creation du compte administrateur
+    switchAuthTab(cfg.firstAccountIsAdmin ? 'signup' : 'login');
+    show('screen-login');
+  }
+
+  function switchAuthTab(which) {
+    const signup = which === 'signup' && state.allowSignup !== false;
+    $('tab-login').classList.toggle('active', !signup);
+    $('tab-signup').classList.toggle('active', signup);
+    $('tab-login').setAttribute('aria-selected', String(!signup));
+    $('tab-signup').setAttribute('aria-selected', String(signup));
+    $('login-form').hidden = signup;
+    $('signup-form').hidden = !signup;
+    setError('login-error');
+    setError('signup-error');
+    (signup ? $('su-name') : $('login')).focus();
+  }
+  $('tab-login').addEventListener('click', () => switchAuthTab('login'));
+  $('tab-signup').addEventListener('click', () => switchAuthTab('signup'));
+
   async function checkAuth() {
     try {
-      const me = await api('/api/me');
-      state.user = me;
-      $('home-name').textContent = me.displayName || me.login;
-      show('screen-home');
+      enterApp(await api('/api/me'));
     } catch (e) {
-      show('screen-login');
+      showLogin();
     }
   }
 
   $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const err = $('login-error');
-    err.hidden = true;
+    setError('login-error');
     try {
       const me = await api('/api/login', {
         method: 'POST',
         body: JSON.stringify({ login: $('login').value, password: $('password').value }),
       });
-      state.user = me;
-      $('home-name').textContent = me.displayName || me.login;
       $('password').value = '';
-      show('screen-home');
+      enterApp(me);
     } catch (e2) {
-      err.textContent = e2.message || 'Connexion impossible.';
-      err.hidden = false;
+      setError('login-error', e2.message || 'Connexion impossible.');
+    }
+  });
+
+  $('signup-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setError('signup-error');
+    if ($('su-password').value !== $('su-password2').value) {
+      setError('signup-error', 'Les deux mots de passe ne sont pas identiques.');
+      return;
+    }
+    try {
+      const me = await api('/api/signup', {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: $('su-name').value,
+          login: $('su-login').value,
+          password: $('su-password').value,
+        }),
+      });
+      ['su-name', 'su-login', 'su-password', 'su-password2'].forEach((id) => { $(id).value = ''; });
+      enterApp(me);
+    } catch (e2) {
+      if (e2.data && e2.data.exists) {
+        // Le compte existe deja : on bascule vers la connexion avec l'identifiant pre-rempli
+        const login = $('su-login').value.trim().toLowerCase();
+        switchAuthTab('login');
+        $('login').value = login;
+        $('password').focus();
+        setError('login-error', e2.message);
+      } else {
+        setError('signup-error', e2.message || 'Création impossible.');
+      }
     }
   });
 
   $('logout-btn').addEventListener('click', async () => {
     stopSpeak();
     await api('/api/logout', { method: 'POST' }).catch(() => {});
-    state.user = null;
-    show('screen-login');
+    showLogin();
   });
+
+  // ----------------------------------------------------------------------
+  // Mot de passe personnel
+  // ----------------------------------------------------------------------
+  $('my-password-btn').addEventListener('click', () => {
+    $('pw-form').reset();
+    setError('pw-error');
+    $('pw-dialog').showModal();
+  });
+  $('pw-cancel').addEventListener('click', () => $('pw-dialog').close());
+  $('pw-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/me/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: $('pw-current').value, newPassword: $('pw-new').value }),
+      });
+      $('pw-dialog').close();
+    } catch (e2) {
+      setError('pw-error', e2.message);
+    }
+  });
+
+  // ----------------------------------------------------------------------
+  // Administration des utilisateurs
+  // ----------------------------------------------------------------------
+  const admin = { users: [], me: null, editing: null };
+
+  $('admin-btn').addEventListener('click', openAdmin);
+  $('admin-back-btn').addEventListener('click', () => show('screen-home'));
+
+  async function openAdmin() {
+    stopSpeak();
+    await loadUsers();
+    show('screen-admin');
+  }
+
+  function adminMessage(msg) {
+    const el = $('admin-msg');
+    el.textContent = msg || '';
+    el.hidden = !msg;
+    if (msg) setTimeout(() => { if (el.textContent === msg) el.hidden = true; }, 4000);
+  }
+
+  async function loadUsers() {
+    try {
+      const data = await api('/api/admin/users');
+      admin.users = data.users;
+      admin.me = data.me;
+      $('allow-signup').checked = !!data.settings.allowSignup;
+      renderUsers();
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) return showLogin();
+      adminMessage(e.message);
+    }
+  }
+
+  function renderUsers() {
+    const ul = $('user-list');
+    ul.innerHTML = '';
+    admin.users.forEach((u) => {
+      const li = document.createElement('li');
+      li.className = 'user-row';
+      const grade = GRADES[Number(u.lastGrade)];
+      const last = u.lastDate
+        ? `Dernière séance : ${formatDate(u.lastDate)} · ${u.lastNote}/20 ${grade ? grade.smiley : ''}`
+        : 'Aucune séance pour le moment';
+      li.innerHTML = `
+        <div class="user-main">
+          <div class="user-name">${escapeHtml(u.displayName)}
+            <span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-eleve'}">${u.role === 'admin' ? 'Admin' : 'Élève'}</span>
+            ${u.login === admin.me ? '<span class="badge badge-me">Moi</span>' : ''}
+          </div>
+          <div class="user-meta">@${escapeHtml(u.login)} · ${u.sessions} séance${u.sessions > 1 ? 's' : ''}</div>
+          <div class="user-meta">${last}</div>
+        </div>
+        <div class="user-actions">
+          <button class="btn btn-small btn-secondary" data-act="cal">📅 Calendrier</button>
+          <button class="btn btn-small btn-secondary" data-act="edit">✏️ Modifier</button>
+          ${u.login === admin.me ? '' : '<button class="btn btn-small btn-danger" data-act="del">🗑️ Supprimer</button>'}
+        </div>`;
+      li.querySelector('[data-act="cal"]').addEventListener('click', () => openUserCalendar(u));
+      li.querySelector('[data-act="edit"]').addEventListener('click', () => openUserDialog(u));
+      const del = li.querySelector('[data-act="del"]');
+      if (del) del.addEventListener('click', () => deleteUser(u));
+      ul.appendChild(li);
+    });
+  }
+
+  $('allow-signup').addEventListener('change', async (e) => {
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ allowSignup: e.target.checked }) });
+      adminMessage(e.target.checked ? 'Création de compte autorisée.' : 'Création de compte désactivée.');
+    } catch (e2) {
+      e.target.checked = !e.target.checked;
+      adminMessage(e2.message);
+    }
+  });
+
+  $('add-user-btn').addEventListener('click', () => openUserDialog(null));
+  $('ud-cancel').addEventListener('click', () => $('user-dialog').close());
+
+  function openUserDialog(u) {
+    admin.editing = u;
+    $('user-form').reset();
+    setError('ud-error');
+    $('ud-title').textContent = u ? `Modifier ${u.displayName}` : 'Ajouter un utilisateur';
+    $('ud-name').value = u ? u.displayName : '';
+    $('ud-login').value = u ? u.login : '';
+    $('ud-login').disabled = !!u;
+    $('ud-role').value = u ? u.role : 'eleve';
+    $('ud-password-label').textContent = u ? 'Nouveau mot de passe' : 'Mot de passe';
+    $('ud-password').required = !u;
+    $('ud-password-hint').hidden = !u;
+    $('user-dialog').showModal();
+  }
+
+  $('user-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setError('ud-error');
+    const u = admin.editing;
+    try {
+      if (u) {
+        const body = { displayName: $('ud-name').value, role: $('ud-role').value };
+        if ($('ud-password').value) body.password = $('ud-password').value;
+        await api(`/api/admin/users/${encodeURIComponent(u.login)}`, { method: 'PATCH', body: JSON.stringify(body) });
+        adminMessage(`${body.displayName} a été modifié.`);
+      } else {
+        const body = {
+          displayName: $('ud-name').value,
+          login: $('ud-login').value,
+          role: $('ud-role').value,
+          password: $('ud-password').value,
+        };
+        await api('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
+        adminMessage(`Compte « ${body.login.trim().toLowerCase()} » créé.`);
+      }
+      $('user-dialog').close();
+      await loadUsers();
+      // Si je me suis retire le role admin, on revient a l'accueil
+      if (u && u.login === admin.me && $('ud-role').value !== 'admin') {
+        state.user.role = 'eleve';
+        enterApp(state.user);
+      }
+    } catch (e2) {
+      setError('ud-error', e2.message);
+    }
+  });
+
+  async function deleteUser(u) {
+    if (!window.confirm(`Supprimer le compte « ${u.login} » (${u.displayName}) et tout son historique ? Cette action est définitive.`)) return;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(u.login)}`, { method: 'DELETE' });
+      adminMessage(`Compte « ${u.login} » supprimé.`);
+      await loadUsers();
+    } catch (e) {
+      adminMessage(e.message);
+    }
+  }
+
+  async function openUserCalendar(u) {
+    try {
+      const data = await api(`/api/admin/users/${encodeURIComponent(u.login)}/history`);
+      openCalendarWith(data.history, `📅 ${data.user.displayName}`, 'screen-admin');
+    } catch (e) {
+      adminMessage(e.message);
+    }
+  }
+
+  function formatDate(iso) {
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  }
 
   // ----------------------------------------------------------------------
   // Deroulement d'une seance
@@ -355,17 +694,26 @@
   // ----------------------------------------------------------------------
   $('show-calendar-btn').addEventListener('click', openCalendar);
   $('result-calendar-btn').addEventListener('click', openCalendar);
-  $('calendar-back-btn').addEventListener('click', () => show(state.user ? 'screen-home' : 'screen-login'));
+  $('calendar-back-btn').addEventListener('click', () => show(state.user ? state.calBack || 'screen-home' : 'screen-login'));
   $('cal-prev').addEventListener('click', () => { state.calMonth.setMonth(state.calMonth.getMonth() - 1); renderCalendar(); });
   $('cal-next').addEventListener('click', () => { state.calMonth.setMonth(state.calMonth.getMonth() + 1); renderCalendar(); });
 
   async function openCalendar() {
     stopSpeak();
+    let history = [];
     try {
-      state.history = await api('/api/history');
+      history = await api('/api/history');
     } catch (e) {
-      state.history = [];
+      history = [];
     }
+    openCalendarWith(history, '📅 Mon calendrier', 'screen-home');
+  }
+
+  function openCalendarWith(history, title, backScreen) {
+    state.history = history;
+    state.calOwn = backScreen === 'screen-home';
+    state.calBack = backScreen;
+    $('cal-title').textContent = title;
     const now = new Date();
     state.calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     renderCalendar();
@@ -406,7 +754,8 @@
       c.innerHTML = `<span class="day-num">${d}</span><span class="day-smiley">${smiley}</span>`;
       if (rec) {
         c.title = `${rec.note20}/20`;
-        c.addEventListener('click', () => speak(`Le ${d} ${monthNames[m]}, tu as eu ${rec.note20} sur 20. ${(GRADES[Number(rec.grade)] || {}).label || ''}.`));
+        const who = state.calOwn ? 'tu as eu' : 'note';
+        c.addEventListener('click', () => speak(`Le ${d} ${monthNames[m]}, ${who} ${rec.note20} sur 20. ${(GRADES[Number(rec.grade)] || {}).label || ''}.`));
       }
       grid.appendChild(c);
     }

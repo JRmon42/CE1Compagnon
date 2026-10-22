@@ -9,12 +9,19 @@ et accédée en **HTTPS**.
 
 ## ✨ Fonctionnalités
 
-- **Connexion** par identifiant + mot de passe.
+- **Connexion** par identifiant + mot de passe, ou **création de compte** depuis la page d'accueil
+  (si l'identifiant existe déjà, l'application propose de se connecter).
+- **Rôles** : *administrateur* (parent / enseignant) et *élève*.
+- **Gestion des utilisateurs** (administrateurs) : ajouter, renommer, changer le rôle,
+  réinitialiser le mot de passe, supprimer un compte, voir le calendrier de chaque élève,
+  et ouvrir ou fermer la création de compte publique.
+- Chaque utilisateur peut **changer son mot de passe**.
 - **Séance de ~20 minutes** : une série d'exercices variés (minuteur intégré).
 - **Correction immédiate** après chaque réponse :
   - la bonne réponse est affichée,
   - une **explication écrite en français**,
-  - la même explication **lue à voix haute** (synthèse vocale française du navigateur).
+  - la même explication **lue à voix haute** avec une **voix française naturelle**
+    (Azure AI Speech, voix `fr-FR-DeniseNeural`) ; à défaut, la meilleure voix française du navigateur.
 - **Smileys** par exercice :
   - 😄👑 Très bien (bonne réponse du premier coup)
   - 🙂👑 Bien (bonne réponse avec un indice)
@@ -36,17 +43,21 @@ npm start
 # ouvrir http://localhost:3000
 ```
 
-Compte par défaut (créé au premier démarrage) :
-- identifiant : `eleve`
-- mot de passe : `ce1`
+Au premier lancement, ouvrir l'onglet **Créer un compte** : tant qu'aucun administrateur
+n'existe, **le premier compte créé devient administrateur**. Il peut ensuite créer les comptes
+des élèves depuis **👥 Gérer les utilisateurs**, et fermer la création de compte publique.
 
-Personnalisable via les variables d'environnement `DEFAULT_LOGIN`, `DEFAULT_PASSWORD`, `DEFAULT_NAME`.
+Optionnel : `DEFAULT_LOGIN` / `DEFAULT_PASSWORD` / `DEFAULT_NAME` créent un compte élève au
+démarrage, et `ADMIN_LOGIN` promeut un compte existant en administrateur.
 
 ## 🔧 Technique
 
 - **Backend** : Node.js + Express (sessions, hash bcrypt des mots de passe).
-- **Frontend** : HTML/CSS/JS (aucun build), synthèse vocale via l'API `speechSynthesis` du navigateur.
-- **Données** : fichiers JSON dans `DATA_DIR` (par défaut `/home/data` sur Azure App Service, persistant).
+- **Frontend** : HTML/CSS/JS (aucun build).
+- **Voix** : le serveur génère l'audio via Azure AI Speech (`/api/tts`, mis en cache dans `DATA_DIR/tts-cache`) ;
+  secours automatique sur l'API `speechSynthesis` du navigateur, en forçant une voix française.
+- **Données** : fichiers JSON dans `DATA_DIR` (par défaut `/home/data` sur Azure App Service, persistant ;
+  `./data` en local) : `users.json`, `settings.json`, `results/<identifiant>.json`.
 
 ### Variables d'environnement
 
@@ -54,13 +65,28 @@ Personnalisable via les variables d'environnement `DEFAULT_LOGIN`, `DEFAULT_PASS
 |---|---|---|
 | `PORT` | port HTTP | `3000` |
 | `DATA_DIR` | dossier de stockage | `/home/data` (ou `./data`) |
-| `DEFAULT_LOGIN` | identifiant du compte créé | `eleve` |
-| `DEFAULT_PASSWORD` | mot de passe du compte créé | `ce1` |
+| `DEFAULT_PASSWORD` | si défini, crée un compte élève au démarrage | — |
+| `DEFAULT_LOGIN` | identifiant de ce compte | `eleve` |
 | `DEFAULT_NAME` | prénom affiché | `Ma championne` |
+| `ADMIN_LOGIN` | promeut ce compte existant en administrateur au démarrage | — |
+| `SPEECH_KEY` | clé de la ressource Azure AI Speech (voix française du serveur) | — |
+| `SPEECH_REGION` | région de la ressource Speech | `francecentral` |
+| `SPEECH_VOICE` | voix utilisée | `fr-FR-DeniseNeural` |
 | `SESSION_SECRET` | secret des cookies de session | à définir en production |
 
 ## ☁️ Déploiement Azure
 
-Déployé sur **Azure App Service** (Linux, Node). Le HTTPS est fourni automatiquement
+Adresse : **https://ce1compagnon.pontvianne.com** (domaine GoDaddy : CNAME `ce1compagnon` → `ce1compagnon-hpc.azurewebsites.net`
+et TXT `asuid.ce1compagnon` pour la vérification ; certificat HTTPS gratuit géré par App Service, renouvelé automatiquement).
+
+Déployé sur **Azure App Service** (Linux, Node), avec une ressource **Azure AI Speech** (niveau gratuit F0)
+pour la voix française. Le HTTPS est fourni automatiquement
 sur le domaine `*.azurewebsites.net`. Le dossier `/home` est persistant, donc les
 comptes et l'historique sont conservés.
+
+```bash
+# Déploiement (les dépendances sont incluses dans le zip)
+npm ci --omit=dev
+zip -qr app.zip . -x '.git/*' 'data/*'
+az webapp deploy -g rg-ce1compagnon -n ce1compagnon-hpc --src-path app.zip --type zip
+```

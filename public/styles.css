@@ -172,7 +172,7 @@ h2 { font-size: 1.5rem; margin: 6px 0; color: var(--violet-dark); }
 /* ---------- Calendrier ---------- */
 .cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .cal-month { font-weight: bold; font-size: 1.2rem; text-transform: capitalize; }
-.cal-grid-head, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.cal-grid-head, .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
 .cal-grid-head { font-weight: bold; color: #636e72; margin-bottom: 6px; }
 .cal-cell {
   aspect-ratio: 1 / 1;
@@ -187,11 +187,66 @@ h2 { font-size: 1.5rem; margin: 6px 0; color: var(--violet-dark); }
 }
 .cal-cell.empty { background: transparent; }
 .cal-cell .day-num { position: absolute; top: 3px; left: 5px; font-size: 0.7rem; color: #b2bec3; }
-.cal-cell .day-smiley { font-size: 1.4rem; }
+.cal-cell .day-smiley { font-size: 1.4rem; line-height: 1.1; text-align: center; }
+.cal-cell { min-width: 0; overflow: hidden; }
 .cal-cell.today { outline: 3px solid var(--violet); }
 .cal-legend { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 14px; font-size: 0.85rem; color: #636e72; }
 
+/* ---------- Onglets connexion / creation ---------- */
+.tabs { display: flex; background: var(--gris); border-radius: 16px; padding: 4px; margin: 6px 0 16px; }
+.tab {
+  flex: 1; border: none; background: transparent; border-radius: 12px; padding: 10px 8px;
+  font-family: inherit; font-weight: bold; font-size: 1rem; color: #636e72; cursor: pointer;
+}
+.tab.active { background: #fff; color: var(--violet); box-shadow: 0 2px 8px rgba(45, 52, 54, 0.12); }
+.tab[hidden] { display: none; }
+.info { background: #ece9ff; color: var(--violet-dark); border-radius: 14px; padding: 10px 12px; text-align: left; margin: 0 0 12px; }
+.hint { color: #636e72; font-size: 0.85rem; text-align: left; margin: -6px 0 10px; }
+.btn-link { background: transparent; color: #636e72; font-weight: normal; font-size: 0.95rem; text-decoration: underline; }
+.btn-small { padding: 8px 12px; font-size: 0.9rem; border-radius: 12px; margin: 3px 2px; }
+.btn-danger { background: #ffe3e0; color: #c0392b; }
+.btn-danger:hover { background: #ffd0cb; }
+
+/* ---------- Administration ---------- */
+.admin-card { text-align: left; }
+.admin-toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.admin-toolbar .btn { margin: 0; }
+.switch-row { display: flex; gap: 8px; align-items: center; color: #636e72; font-size: 0.9rem; cursor: pointer; max-width: 320px; }
+.switch-row input { width: 20px; height: 20px; accent-color: var(--violet); flex-shrink: 0; }
+.user-list { list-style: none; padding: 0; margin: 0; }
+.user-row {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between;
+  padding: 12px 0; border-top: 1px solid #eef0f4;
+}
+.user-row:first-child { border-top: none; }
+.user-main { min-width: 0; flex: 1 1 220px; }
+.user-name { font-weight: bold; font-size: 1.1rem; }
+.user-meta { color: #636e72; font-size: 0.85rem; margin-top: 2px; overflow-wrap: anywhere; }
+.user-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; }
+.badge { display: inline-block; font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; vertical-align: middle; margin-left: 4px; }
+.badge-admin { background: var(--violet); color: #fff; }
+.badge-eleve { background: #d6f5ec; color: #00876a; }
+.badge-me { background: #fff1c1; color: #8a6d00; }
+
+/* ---------- Fenetres ---------- */
+.dialog {
+  border: none; border-radius: 22px; padding: 22px 20px; width: min(440px, calc(100vw - 32px));
+  box-shadow: var(--ombre); color: var(--texte); font-family: inherit;
+}
+.dialog::backdrop { background: rgba(45, 52, 54, 0.45); }
+.dialog h2 { margin-top: 0; }
+.dialog label { display: block; font-weight: bold; color: #636e72; }
+.dialog input, .dialog select, .login-card select {
+  width: 100%; padding: 12px; margin: 6px 0 12px; border: 2px solid #dfe6e9; border-radius: 12px;
+  font-size: 1rem; font-family: inherit; background: #fff;
+}
+.dialog input:disabled { background: var(--gris); color: #636e72; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+
 @media (max-width: 480px) {
+  .user-actions { justify-content: flex-start; }
   .exo-question { font-size: 1.5rem; }
   .card { padding: 20px 16px; }
+  .cal-grid-head, .cal-grid { gap: 4px; }
+  .cal-cell .day-smiley { font-size: 1rem; }
 }
