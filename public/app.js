@@ -31,35 +31,136 @@
   // ----------------------------------------------------------------------
   // Synthese vocale (voix francaise)
   // ----------------------------------------------------------------------
+  // 1) Voix neuronale francaise generee par le serveur (Azure AI Speech) :
+  //    meme voix francaise sur tous les appareils.
+  // 2) Secours : voix francaise du navigateur (jamais la voix anglaise par defaut).
+  const hasSynth = 'speechSynthesis' in window;
+  const player = new Audio();
+  player.preload = 'auto';
+  const audioCache = new Map(); // texte -> URL du fichier audio
+  let serverTts = false;
+  let speakToken = 0;
   let frVoice = null;
-  function loadVoices() {
-    if (!('speechSynthesis' in window)) return;
-    const voices = window.speechSynthesis.getVoices();
-    frVoice =
-      voices.find((v) => /fr[-_]FR/i.test(v.lang)) ||
-      voices.find((v) => /^fr/i.test(v.lang)) ||
-      null;
+
+  fetch('/api/tts/status')
+    .then((r) => r.json())
+    .then((s) => { serverTts = !!s.enabled; })
+    .catch(() => { serverTts = false; });
+
+  // Les tablettes (iPad) n'autorisent le son qu'apres un geste de l'utilisateur :
+  // on "debloque" le lecteur audio au premier toucher avec un court silence.
+  function silentWavUrl() {
+    const n = 400;
+    const buf = new ArrayBuffer(44 + n);
+    const v = new DataView(buf);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 8000, true); v.setUint32(28, 8000, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    w(36, 'data'); v.setUint32(40, n, true);
+    for (let i = 0; i < n; i++) v.setUint8(44 + i, 128);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
   }
-  if ('speechSynthesis' in window) {
+  function unlockAudio() {
+    document.removeEventListener('pointerdown', unlockAudio, true);
+    document.removeEventListener('keydown', unlockAudio, true);
+    try {
+      player.src = silentWavUrl();
+      const p = player.play();
+      if (p) p.catch(() => {});
+    } catch (e) { /* ignore */ }
+    if (hasSynth) {
+      // Reveille aussi la synthese du navigateur (necessaire sur iOS)
+      try { window.speechSynthesis.speak(new SpeechSynthesisUtterance('')); } catch (e) { /* ignore */ }
+    }
+  }
+  document.addEventListener('pointerdown', unlockAudio, true);
+  document.addEventListener('keydown', unlockAudio, true);
+
+  // Choix de la meilleure voix francaise disponible dans le navigateur
+  function pickFrenchVoice() {
+    if (!hasSynth) return null;
+    const voices = window.speechSynthesis.getVoices().filter((v) => /^fr\b|^fr[-_]/i.test(v.lang));
+    if (!voices.length) return null;
+    const score = (v) =>
+      (/fr[-_]FR/i.test(v.lang) ? 10 : 0) +
+      (/natural|neural|online|google|premium|enhanced|amélie|amelie|thomas|denise|audrey|aurélie/i.test(v.name) ? 5 : 0) +
+      (v.localService ? 0 : 1);
+    return voices.sort((a, b) => score(b) - score(a))[0];
+  }
+  function loadVoices() { frVoice = pickFrenchVoice(); }
+  if (hasSynth) {
     loadVoices();
-    window.speechSynthesis.onvoiceschanged = loadVoices;
+    window.speechSynthesis.addEventListener('voiceschanged', loadVoices);
   }
-  function speak(text) {
-    if (!('speechSynthesis' in window) || !text) return;
+  function waitForVoices(ms) {
+    if (!hasSynth || frVoice || window.speechSynthesis.getVoices().length) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => { window.speechSynthesis.removeEventListener('voiceschanged', done); resolve(); };
+      window.speechSynthesis.addEventListener('voiceschanged', done);
+      setTimeout(done, ms);
+    });
+  }
+
+  async function browserSpeak(text, token) {
+    if (!hasSynth) return;
+    await waitForVoices(1500);
+    loadVoices();
+    if (token !== speakToken) return;
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'fr-FR';
       if (frVoice) u.voice = frVoice;
-      u.rate = 0.95;
-      u.pitch = 1.05;
+      u.rate = 0.9;
       window.speechSynthesis.speak(u);
     } catch (e) {
       /* la synthese vocale peut etre indisponible */
     }
   }
+
+  async function serverAudioUrl(text) {
+    if (audioCache.has(text)) return audioCache.get(text);
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error('tts ' + res.status);
+    const url = URL.createObjectURL(await res.blob());
+    audioCache.set(text, url);
+    if (audioCache.size > 150) {
+      const first = audioCache.keys().next().value;
+      URL.revokeObjectURL(audioCache.get(first));
+      audioCache.delete(first);
+    }
+    return url;
+  }
+
+  async function speak(text) {
+    text = String(text || '').trim();
+    if (!text) return;
+    stopSpeak();
+    const token = ++speakToken;
+    if (serverTts && state.user) {
+      try {
+        const url = await serverAudioUrl(text);
+        if (token !== speakToken) return;
+        player.src = url;
+        await player.play();
+        return;
+      } catch (e) {
+        if (token !== speakToken) return;
+        /* on passe a la voix du navigateur */
+      }
+    }
+    browserSpeak(text, token);
+  }
+
   function stopSpeak() {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    speakToken++;
+    try { player.pause(); } catch (e) { /* ignore */ }
+    if (hasSynth) window.speechSynthesis.cancel();
   }
 
   // ----------------------------------------------------------------------

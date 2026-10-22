@@ -254,6 +254,59 @@ app.post('/api/me/password', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Synthese vocale en francais (Azure AI Speech, voix neuronale)
+//   SPEECH_KEY / SPEECH_REGION : ressource Azure Speech ; SPEECH_VOICE : voix utilisee.
+//   Les fichiers audio sont mis en cache dans DATA_DIR/tts-cache.
+// ---------------------------------------------------------------------------
+const SPEECH_KEY = process.env.SPEECH_KEY || '';
+const SPEECH_REGION = process.env.SPEECH_REGION || 'francecentral';
+const SPEECH_VOICE = process.env.SPEECH_VOICE || 'fr-FR-DeniseNeural';
+const TTS_CACHE_DIR = path.join(DATA_DIR, 'tts-cache');
+fs.mkdirSync(TTS_CACHE_DIR, { recursive: true });
+
+function xmlEscape(s) {
+  return s.replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
+}
+
+app.get('/api/tts/status', (req, res) => res.json({ enabled: !!SPEECH_KEY, voice: SPEECH_VOICE }));
+
+app.post('/api/tts', requireAuth, async (req, res) => {
+  if (!SPEECH_KEY) return res.status(503).json({ error: 'Synthèse vocale serveur non configurée.' });
+  const text = String((req.body && req.body.text) || '').replace(/\s+/g, ' ').trim().slice(0, 800);
+  if (!text) return res.status(400).json({ error: 'Texte vide.' });
+  const hash = require('crypto').createHash('sha1').update(`${SPEECH_VOICE}|${text}`).digest('hex');
+  const file = path.join(TTS_CACHE_DIR, `${hash}.mp3`);
+  res.set('Cache-Control', 'private, max-age=86400');
+  if (fs.existsSync(file)) return res.type('audio/mpeg').sendFile(file);
+  const ssml =
+    `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="fr-FR">` +
+    `<voice name="${SPEECH_VOICE}"><prosody rate="-8%">${xmlEscape(text)}</prosody></voice></speak>`;
+  try {
+    const r = await fetch(`https://${SPEECH_REGION}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': SPEECH_KEY,
+        'Content-Type': 'application/ssml+xml',
+        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+        'User-Agent': 'ce1-compagnon',
+      },
+      body: ssml,
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) {
+      console.error(`[tts] erreur ${r.status}`);
+      return res.status(502).json({ error: 'Synthèse vocale indisponible.' });
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    fs.writeFile(file, buf, () => {});
+    res.type('audio/mpeg').send(buf);
+  } catch (e) {
+    console.error('[tts]', e.message);
+    res.status(502).json({ error: 'Synthèse vocale indisponible.' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // API des resultats (une session = un soir)
 // ---------------------------------------------------------------------------
 function resultsFileFor(login) {

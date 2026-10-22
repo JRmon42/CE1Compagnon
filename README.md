@@ -20,7 +20,8 @@ et accédée en **HTTPS**.
 - **Correction immédiate** après chaque réponse :
   - la bonne réponse est affichée,
   - une **explication écrite en français**,
-  - la même explication **lue à voix haute** (synthèse vocale française du navigateur).
+  - la même explication **lue à voix haute** avec une **voix française naturelle**
+    (Azure AI Speech, voix `fr-FR-DeniseNeural`) ; à défaut, la meilleure voix française du navigateur.
 - **Smileys** par exercice :
   - 😄👑 Très bien (bonne réponse du premier coup)
   - 🙂👑 Bien (bonne réponse avec un indice)
@@ -52,7 +53,9 @@ démarrage, et `ADMIN_LOGIN` promeut un compte existant en administrateur.
 ## 🔧 Technique
 
 - **Backend** : Node.js + Express (sessions, hash bcrypt des mots de passe).
-- **Frontend** : HTML/CSS/JS (aucun build), synthèse vocale via l'API `speechSynthesis` du navigateur.
+- **Frontend** : HTML/CSS/JS (aucun build).
+- **Voix** : le serveur génère l'audio via Azure AI Speech (`/api/tts`, mis en cache dans `DATA_DIR/tts-cache`) ;
+  secours automatique sur l'API `speechSynthesis` du navigateur, en forçant une voix française.
 - **Données** : fichiers JSON dans `DATA_DIR` (par défaut `/home/data` sur Azure App Service, persistant ;
   `./data` en local) : `users.json`, `settings.json`, `results/<identifiant>.json`.
 
@@ -66,11 +69,15 @@ démarrage, et `ADMIN_LOGIN` promeut un compte existant en administrateur.
 | `DEFAULT_LOGIN` | identifiant de ce compte | `eleve` |
 | `DEFAULT_NAME` | prénom affiché | `Ma championne` |
 | `ADMIN_LOGIN` | promeut ce compte existant en administrateur au démarrage | — |
+| `SPEECH_KEY` | clé de la ressource Azure AI Speech (voix française du serveur) | — |
+| `SPEECH_REGION` | région de la ressource Speech | `francecentral` |
+| `SPEECH_VOICE` | voix utilisée | `fr-FR-DeniseNeural` |
 | `SESSION_SECRET` | secret des cookies de session | à définir en production |
 
 ## ☁️ Déploiement Azure
 
-Déployé sur **Azure App Service** (Linux, Node). Le HTTPS est fourni automatiquement
+Déployé sur **Azure App Service** (Linux, Node), avec une ressource **Azure AI Speech** (niveau gratuit F0)
+pour la voix française. Le HTTPS est fourni automatiquement
 sur le domaine `*.azurewebsites.net`. Le dossier `/home` est persistant, donc les
 comptes et l'historique sont conservés.
 
