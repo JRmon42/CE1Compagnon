@@ -77,47 +77,285 @@
     const res = await fetch(path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, options));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw Object.assign(new Error(err.error || 'Erreur'), { status: res.status });
+      throw Object.assign(new Error(err.error || 'Erreur'), { status: res.status, data: err });
     }
     return res.json();
   }
 
+  function setError(id, msg) {
+    const el = $(id);
+    el.textContent = msg || '';
+    el.hidden = !msg;
+  }
+
+  function enterApp(me) {
+    state.user = me;
+    $('home-name').textContent = me.displayName || me.login;
+    $('admin-btn').hidden = me.role !== 'admin';
+    show('screen-home');
+  }
+
+  async function showLogin() {
+    state.user = null;
+    let cfg = { allowSignup: true, firstAccountIsAdmin: false };
+    try { cfg = await api('/api/config'); } catch (e) { /* valeurs par defaut */ }
+    $('signup-first').hidden = !cfg.firstAccountIsAdmin;
+    state.allowSignup = cfg.allowSignup;
+    $('tab-signup').hidden = !cfg.allowSignup;
+    $('signup-closed').hidden = !!cfg.allowSignup;
+    // Premier lancement : on propose directement la creation du compte administrateur
+    switchAuthTab(cfg.firstAccountIsAdmin ? 'signup' : 'login');
+    show('screen-login');
+  }
+
+  function switchAuthTab(which) {
+    const signup = which === 'signup' && state.allowSignup !== false;
+    $('tab-login').classList.toggle('active', !signup);
+    $('tab-signup').classList.toggle('active', signup);
+    $('tab-login').setAttribute('aria-selected', String(!signup));
+    $('tab-signup').setAttribute('aria-selected', String(signup));
+    $('login-form').hidden = signup;
+    $('signup-form').hidden = !signup;
+    setError('login-error');
+    setError('signup-error');
+    (signup ? $('su-name') : $('login')).focus();
+  }
+  $('tab-login').addEventListener('click', () => switchAuthTab('login'));
+  $('tab-signup').addEventListener('click', () => switchAuthTab('signup'));
+
   async function checkAuth() {
     try {
-      const me = await api('/api/me');
-      state.user = me;
-      $('home-name').textContent = me.displayName || me.login;
-      show('screen-home');
+      enterApp(await api('/api/me'));
     } catch (e) {
-      show('screen-login');
+      showLogin();
     }
   }
 
   $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const err = $('login-error');
-    err.hidden = true;
+    setError('login-error');
     try {
       const me = await api('/api/login', {
         method: 'POST',
         body: JSON.stringify({ login: $('login').value, password: $('password').value }),
       });
-      state.user = me;
-      $('home-name').textContent = me.displayName || me.login;
       $('password').value = '';
-      show('screen-home');
+      enterApp(me);
     } catch (e2) {
-      err.textContent = e2.message || 'Connexion impossible.';
-      err.hidden = false;
+      setError('login-error', e2.message || 'Connexion impossible.');
+    }
+  });
+
+  $('signup-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setError('signup-error');
+    if ($('su-password').value !== $('su-password2').value) {
+      setError('signup-error', 'Les deux mots de passe ne sont pas identiques.');
+      return;
+    }
+    try {
+      const me = await api('/api/signup', {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: $('su-name').value,
+          login: $('su-login').value,
+          password: $('su-password').value,
+        }),
+      });
+      ['su-name', 'su-login', 'su-password', 'su-password2'].forEach((id) => { $(id).value = ''; });
+      enterApp(me);
+    } catch (e2) {
+      if (e2.data && e2.data.exists) {
+        // Le compte existe deja : on bascule vers la connexion avec l'identifiant pre-rempli
+        const login = $('su-login').value.trim().toLowerCase();
+        switchAuthTab('login');
+        $('login').value = login;
+        $('password').focus();
+        setError('login-error', e2.message);
+      } else {
+        setError('signup-error', e2.message || 'Création impossible.');
+      }
     }
   });
 
   $('logout-btn').addEventListener('click', async () => {
     stopSpeak();
     await api('/api/logout', { method: 'POST' }).catch(() => {});
-    state.user = null;
-    show('screen-login');
+    showLogin();
   });
+
+  // ----------------------------------------------------------------------
+  // Mot de passe personnel
+  // ----------------------------------------------------------------------
+  $('my-password-btn').addEventListener('click', () => {
+    $('pw-form').reset();
+    setError('pw-error');
+    $('pw-dialog').showModal();
+  });
+  $('pw-cancel').addEventListener('click', () => $('pw-dialog').close());
+  $('pw-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await api('/api/me/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: $('pw-current').value, newPassword: $('pw-new').value }),
+      });
+      $('pw-dialog').close();
+    } catch (e2) {
+      setError('pw-error', e2.message);
+    }
+  });
+
+  // ----------------------------------------------------------------------
+  // Administration des utilisateurs
+  // ----------------------------------------------------------------------
+  const admin = { users: [], me: null, editing: null };
+
+  $('admin-btn').addEventListener('click', openAdmin);
+  $('admin-back-btn').addEventListener('click', () => show('screen-home'));
+
+  async function openAdmin() {
+    stopSpeak();
+    await loadUsers();
+    show('screen-admin');
+  }
+
+  function adminMessage(msg) {
+    const el = $('admin-msg');
+    el.textContent = msg || '';
+    el.hidden = !msg;
+    if (msg) setTimeout(() => { if (el.textContent === msg) el.hidden = true; }, 4000);
+  }
+
+  async function loadUsers() {
+    try {
+      const data = await api('/api/admin/users');
+      admin.users = data.users;
+      admin.me = data.me;
+      $('allow-signup').checked = !!data.settings.allowSignup;
+      renderUsers();
+    } catch (e) {
+      if (e.status === 401 || e.status === 403) return showLogin();
+      adminMessage(e.message);
+    }
+  }
+
+  function renderUsers() {
+    const ul = $('user-list');
+    ul.innerHTML = '';
+    admin.users.forEach((u) => {
+      const li = document.createElement('li');
+      li.className = 'user-row';
+      const grade = GRADES[Number(u.lastGrade)];
+      const last = u.lastDate
+        ? `Dernière séance : ${formatDate(u.lastDate)} · ${u.lastNote}/20 ${grade ? grade.smiley : ''}`
+        : 'Aucune séance pour le moment';
+      li.innerHTML = `
+        <div class="user-main">
+          <div class="user-name">${escapeHtml(u.displayName)}
+            <span class="badge ${u.role === 'admin' ? 'badge-admin' : 'badge-eleve'}">${u.role === 'admin' ? 'Admin' : 'Élève'}</span>
+            ${u.login === admin.me ? '<span class="badge badge-me">Moi</span>' : ''}
+          </div>
+          <div class="user-meta">@${escapeHtml(u.login)} · ${u.sessions} séance${u.sessions > 1 ? 's' : ''}</div>
+          <div class="user-meta">${last}</div>
+        </div>
+        <div class="user-actions">
+          <button class="btn btn-small btn-secondary" data-act="cal">📅 Calendrier</button>
+          <button class="btn btn-small btn-secondary" data-act="edit">✏️ Modifier</button>
+          ${u.login === admin.me ? '' : '<button class="btn btn-small btn-danger" data-act="del">🗑️ Supprimer</button>'}
+        </div>`;
+      li.querySelector('[data-act="cal"]').addEventListener('click', () => openUserCalendar(u));
+      li.querySelector('[data-act="edit"]').addEventListener('click', () => openUserDialog(u));
+      const del = li.querySelector('[data-act="del"]');
+      if (del) del.addEventListener('click', () => deleteUser(u));
+      ul.appendChild(li);
+    });
+  }
+
+  $('allow-signup').addEventListener('change', async (e) => {
+    try {
+      await api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ allowSignup: e.target.checked }) });
+      adminMessage(e.target.checked ? 'Création de compte autorisée.' : 'Création de compte désactivée.');
+    } catch (e2) {
+      e.target.checked = !e.target.checked;
+      adminMessage(e2.message);
+    }
+  });
+
+  $('add-user-btn').addEventListener('click', () => openUserDialog(null));
+  $('ud-cancel').addEventListener('click', () => $('user-dialog').close());
+
+  function openUserDialog(u) {
+    admin.editing = u;
+    $('user-form').reset();
+    setError('ud-error');
+    $('ud-title').textContent = u ? `Modifier ${u.displayName}` : 'Ajouter un utilisateur';
+    $('ud-name').value = u ? u.displayName : '';
+    $('ud-login').value = u ? u.login : '';
+    $('ud-login').disabled = !!u;
+    $('ud-role').value = u ? u.role : 'eleve';
+    $('ud-password-label').textContent = u ? 'Nouveau mot de passe' : 'Mot de passe';
+    $('ud-password').required = !u;
+    $('ud-password-hint').hidden = !u;
+    $('user-dialog').showModal();
+  }
+
+  $('user-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    setError('ud-error');
+    const u = admin.editing;
+    try {
+      if (u) {
+        const body = { displayName: $('ud-name').value, role: $('ud-role').value };
+        if ($('ud-password').value) body.password = $('ud-password').value;
+        await api(`/api/admin/users/${encodeURIComponent(u.login)}`, { method: 'PATCH', body: JSON.stringify(body) });
+        adminMessage(`${body.displayName} a été modifié.`);
+      } else {
+        const body = {
+          displayName: $('ud-name').value,
+          login: $('ud-login').value,
+          role: $('ud-role').value,
+          password: $('ud-password').value,
+        };
+        await api('/api/admin/users', { method: 'POST', body: JSON.stringify(body) });
+        adminMessage(`Compte « ${body.login.trim().toLowerCase()} » créé.`);
+      }
+      $('user-dialog').close();
+      await loadUsers();
+      // Si je me suis retire le role admin, on revient a l'accueil
+      if (u && u.login === admin.me && $('ud-role').value !== 'admin') {
+        state.user.role = 'eleve';
+        enterApp(state.user);
+      }
+    } catch (e2) {
+      setError('ud-error', e2.message);
+    }
+  });
+
+  async function deleteUser(u) {
+    if (!window.confirm(`Supprimer le compte « ${u.login} » (${u.displayName}) et tout son historique ? Cette action est définitive.`)) return;
+    try {
+      await api(`/api/admin/users/${encodeURIComponent(u.login)}`, { method: 'DELETE' });
+      adminMessage(`Compte « ${u.login} » supprimé.`);
+      await loadUsers();
+    } catch (e) {
+      adminMessage(e.message);
+    }
+  }
+
+  async function openUserCalendar(u) {
+    try {
+      const data = await api(`/api/admin/users/${encodeURIComponent(u.login)}/history`);
+      openCalendarWith(data.history, `📅 ${data.user.displayName}`, 'screen-admin');
+    } catch (e) {
+      adminMessage(e.message);
+    }
+  }
+
+  function formatDate(iso) {
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  }
 
   // ----------------------------------------------------------------------
   // Deroulement d'une seance
@@ -355,17 +593,26 @@
   // ----------------------------------------------------------------------
   $('show-calendar-btn').addEventListener('click', openCalendar);
   $('result-calendar-btn').addEventListener('click', openCalendar);
-  $('calendar-back-btn').addEventListener('click', () => show(state.user ? 'screen-home' : 'screen-login'));
+  $('calendar-back-btn').addEventListener('click', () => show(state.user ? state.calBack || 'screen-home' : 'screen-login'));
   $('cal-prev').addEventListener('click', () => { state.calMonth.setMonth(state.calMonth.getMonth() - 1); renderCalendar(); });
   $('cal-next').addEventListener('click', () => { state.calMonth.setMonth(state.calMonth.getMonth() + 1); renderCalendar(); });
 
   async function openCalendar() {
     stopSpeak();
+    let history = [];
     try {
-      state.history = await api('/api/history');
+      history = await api('/api/history');
     } catch (e) {
-      state.history = [];
+      history = [];
     }
+    openCalendarWith(history, '📅 Mon calendrier', 'screen-home');
+  }
+
+  function openCalendarWith(history, title, backScreen) {
+    state.history = history;
+    state.calOwn = backScreen === 'screen-home';
+    state.calBack = backScreen;
+    $('cal-title').textContent = title;
     const now = new Date();
     state.calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     renderCalendar();
@@ -406,7 +653,8 @@
       c.innerHTML = `<span class="day-num">${d}</span><span class="day-smiley">${smiley}</span>`;
       if (rec) {
         c.title = `${rec.note20}/20`;
-        c.addEventListener('click', () => speak(`Le ${d} ${monthNames[m]}, tu as eu ${rec.note20} sur 20. ${(GRADES[Number(rec.grade)] || {}).label || ''}.`));
+        const who = state.calOwn ? 'tu as eu' : 'note';
+        c.addEventListener('click', () => speak(`Le ${d} ${monthNames[m]}, ${who} ${rec.note20} sur 20. ${(GRADES[Number(rec.grade)] || {}).label || ''}.`));
       }
       grid.appendChild(c);
     }
